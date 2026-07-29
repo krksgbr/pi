@@ -3899,6 +3899,12 @@ export class InteractiveMode {
 	// =========================================================================
 
 	private handleCtrlC(): void {
+		if (this.session.isRetrying) {
+			this.session.abortRetry();
+			this.lastSigintTime = 0;
+			return;
+		}
+
 		const now = Date.now();
 		if (now - this.lastSigintTime < 500) {
 			void this.shutdown();

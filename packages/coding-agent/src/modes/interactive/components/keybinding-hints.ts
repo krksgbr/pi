@@ -31,8 +31,9 @@ function formatKeys(keys: KeyId[], options: KeyTextFormatOptions = {}): string {
 	return formatKeyText(keys.join("/"), options);
 }
 
-export function keyText(keybinding: Keybinding): string {
-	return formatKeys(getKeybindings().getKeys(keybinding));
+export function keyText(...keybindings: Keybinding[]): string {
+	const keys = [...new Set(keybindings.flatMap((keybinding) => getKeybindings().getKeys(keybinding)))];
+	return formatKeys(keys);
 }
 
 export function keyDisplayText(keybinding: Keybinding): string {
