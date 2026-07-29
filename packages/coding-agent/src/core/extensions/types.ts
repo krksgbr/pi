@@ -1210,6 +1210,8 @@ export interface RegisteredCommand {
 	name: string;
 	sourceInfo: SourceInfo;
 	description?: string;
+	/** Shadow a built-in interactive slash command with the same name. */
+	overrideBuiltin?: boolean;
 	getArgumentCompletions?: (argumentPrefix: string) => AutocompleteItem[] | null | Promise<AutocompleteItem[] | null>;
 	handler: (args: string, ctx: ExtensionCommandContext) => Promise<void>;
 }
@@ -1385,6 +1387,9 @@ export interface ExtensionAPI {
 
 	/** Get available slash commands in the current session. */
 	getCommands(): SlashCommandInfo[];
+
+	/** Invoke a registered extension command by its current invocation name. */
+	invokeCommand(name: string, args?: string): Promise<void>;
 
 	// =========================================================================
 	// Model and Thinking Level
@@ -1622,6 +1627,8 @@ export type GetAllToolsHandler = () => ToolInfo[];
 
 export type GetCommandsHandler = () => SlashCommandInfo[];
 
+export type InvokeCommandHandler = (name: string, args?: string) => Promise<void>;
+
 export type SetActiveToolsHandler = (toolNames: string[]) => void;
 
 export type RefreshToolsHandler = () => void;
@@ -1677,6 +1684,7 @@ export interface ExtensionActions {
 	setActiveTools: SetActiveToolsHandler;
 	refreshTools: RefreshToolsHandler;
 	getCommands: GetCommandsHandler;
+	invokeCommand: InvokeCommandHandler;
 	setModel: SetModelHandler;
 	getThinkingLevel: GetThinkingLevelHandler;
 	setThinkingLevel: SetThinkingLevelHandler;

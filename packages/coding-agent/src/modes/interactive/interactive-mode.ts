@@ -657,24 +657,61 @@ export class InteractiveMode {
 		return description ? `[${sourceTag}] ${description}` : `[${sourceTag}]`;
 	}
 
+	private getBuiltInCommandOverrideNames(extensionRunner: ExtensionRunner): Set<string> {
+		const builtinNames = new Set(BUILTIN_SLASH_COMMANDS.map((command) => command.name));
+		const overrideCounts = new Map<string, number>();
+		for (const command of extensionRunner.getRegisteredCommands()) {
+			if (builtinNames.has(command.name) && command.overrideBuiltin) {
+				overrideCounts.set(command.name, (overrideCounts.get(command.name) ?? 0) + 1);
+			}
+		}
+		return new Set([...overrideCounts].filter(([, count]) => count === 1).map(([name]) => name));
+	}
+
 	private getBuiltInCommandConflictDiagnostics(extensionRunner: ExtensionRunner): ResourceDiagnostic[] {
 		const builtinNames = new Set(BUILTIN_SLASH_COMMANDS.map((command) => command.name));
-		return extensionRunner
-			.getRegisteredCommands()
+		const commands = extensionRunner.getRegisteredCommands();
+		const overrideCounts = new Map<string, number>();
+		for (const command of commands) {
+			if (builtinNames.has(command.name) && command.overrideBuiltin) {
+				overrideCounts.set(command.name, (overrideCounts.get(command.name) ?? 0) + 1);
+			}
+		}
+
+		return commands
 			.filter((command) => builtinNames.has(command.name))
-			.map((command) => ({
-				type: "warning" as const,
-				message:
-					command.invocationName === command.name
-						? `Extension command '/${command.name}' conflicts with built-in interactive command. Skipping in autocomplete.`
-						: `Extension command '/${command.name}' conflicts with built-in interactive command. Available as '/${command.invocationName}'.`,
-				path: command.sourceInfo.path,
-			}));
+			.flatMap((command): ResourceDiagnostic[] => {
+				const overrideCount = overrideCounts.get(command.name) ?? 0;
+				if (command.overrideBuiltin && overrideCount === 1) return [];
+				if (command.overrideBuiltin) {
+					return [
+						{
+							type: "error",
+							message: `Multiple extension commands requested override of built-in '/${command.name}'. Built-in remains active; extension command is available as '/${command.invocationName}'.`,
+							path: command.sourceInfo.path,
+						},
+					];
+				}
+				return [
+					{
+						type: "warning",
+						message:
+							command.invocationName === command.name
+								? `Extension command '/${command.name}' conflicts with built-in interactive command. Skipping in autocomplete.`
+								: `Extension command '/${command.name}' conflicts with built-in interactive command. Available as '/${command.invocationName}'.`,
+						path: command.sourceInfo.path,
+					},
+				];
+			});
 	}
 
 	private createBaseAutocompleteProvider(): AutocompleteProvider {
 		// Define commands for autocomplete
-		const slashCommands: SlashCommand[] = BUILTIN_SLASH_COMMANDS.map((command) => ({
+		const registeredCommands = this.session.extensionRunner.getRegisteredCommands();
+		const overriddenBuiltinNames = this.getBuiltInCommandOverrideNames(this.session.extensionRunner);
+		const slashCommands: SlashCommand[] = BUILTIN_SLASH_COMMANDS.filter(
+			(command) => !overriddenBuiltinNames.has(command.name),
+		).map((command) => ({
 			name: command.name,
 			description: command.description,
 			...(command.argumentHint && { argumentHint: command.argumentHint }),
@@ -741,10 +778,9 @@ export class InteractiveMode {
 		}));
 
 		// Convert extension commands to SlashCommand format
-		const builtinCommandNames = new Set(slashCommands.map((c) => c.name));
-		const extensionCommands: SlashCommand[] = this.session.extensionRunner
-			.getRegisteredCommands()
-			.filter((cmd) => !builtinCommandNames.has(cmd.name))
+		const builtinCommandNames = new Set(BUILTIN_SLASH_COMMANDS.map((command) => command.name));
+		const extensionCommands: SlashCommand[] = registeredCommands
+			.filter((cmd) => !builtinCommandNames.has(cmd.name) || overriddenBuiltinNames.has(cmd.name))
 			.map((cmd) => ({
 				name: cmd.invocationName,
 				description: this.prefixAutocompleteDescription(cmd.description, cmd.sourceInfo),
@@ -2897,7 +2933,7 @@ export class InteractiveMode {
 		this.defaultEditor.onAction("app.session.new", () => this.handleClearCommand());
 		this.defaultEditor.onAction("app.session.tree", () => this.showTreeSelector());
 		this.defaultEditor.onAction("app.session.fork", () => this.showUserMessageSelector());
-		this.defaultEditor.onAction("app.session.resume", () => this.showSessionSelector());
+		this.defaultEditor.onAction("app.session.resume", () => void this.handleResumeAction());
 
 		this.defaultEditor.onChange = (text: string) => {
 			const wasBashMode = this.isBashMode;
@@ -2962,6 +2998,13 @@ export class InteractiveMode {
 		this.defaultEditor.onSubmit = async (text: string) => {
 			text = text.trim();
 			if (!text) return;
+
+			if (this.isBuiltInCommandOverride(text)) {
+				this.editor.addToHistory?.(text);
+				this.editor.setText("");
+				await this.session.prompt(text);
+				return;
+			}
 
 			// Handle commands
 			if (text === "/settings") {
@@ -4387,6 +4430,23 @@ export class InteractiveMode {
 		this.editor.setText("");
 		this.updatePendingMessagesDisplay();
 		this.showStatus("Queued message for after compaction");
+	}
+
+	private isBuiltInCommandOverride(text: string): boolean {
+		if (!text.startsWith("/")) return false;
+		const spaceIndex = text.indexOf(" ");
+		const commandName = spaceIndex === -1 ? text.slice(1) : text.slice(1, spaceIndex);
+		if (!BUILTIN_SLASH_COMMANDS.some((command) => command.name === commandName)) return false;
+		const command = this.session.extensionRunner.getCommand(commandName);
+		return command?.name === commandName && command.overrideBuiltin === true;
+	}
+
+	private async handleResumeAction(): Promise<void> {
+		if (this.isBuiltInCommandOverride("/resume")) {
+			await this.session.prompt("/resume");
+			return;
+		}
+		this.showSessionSelector();
 	}
 
 	private isExtensionCommand(text: string): boolean {

@@ -278,6 +278,29 @@ function getPathComparisonCandidates(path: string): string[] {
 	);
 }
 
+const VERSIONED_PACKAGE_SPEC = /@\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/;
+
+function getPrivateForkUpdateScriptPath(): string | undefined {
+	const packageDir = getPackageDir();
+	const scriptPath = resolve(packageDir, "..", "..", "scripts", "update-private-fork.mjs");
+	if (!existsSync(scriptPath)) return undefined;
+
+	const entrypoint = process.argv[1];
+	if (!entrypoint) return undefined;
+	const expectedEntrypoints = [join(packageDir, "dist", "cli.js"), join(packageDir, "src", "cli.ts")].flatMap((path) =>
+		getPathComparisonCandidates(path),
+	);
+	const actualEntrypoints = getPathComparisonCandidates(entrypoint);
+	return actualEntrypoints.some((actual) => expectedEntrypoints.includes(actual)) ? scriptPath : undefined;
+}
+
+function getPrivateForkSelfUpdateCommand(updatePackageTarget: SelfUpdatePackageTarget): SelfUpdateCommand | undefined {
+	const scriptPath = getPrivateForkUpdateScriptPath();
+	const target = normalizeSelfUpdatePackageTarget(updatePackageTarget);
+	if (!scriptPath || !VERSIONED_PACKAGE_SPEC.test(target.installSpec)) return undefined;
+	return makeSelfUpdateCommandStep(process.execPath, [scriptPath, target.installSpec]);
+}
+
 function getEntrypointPackageDir(): string | undefined {
 	const entrypoint = process.argv[1];
 	if (!entrypoint) return undefined;
@@ -318,6 +341,9 @@ export function getSelfUpdateCommand(
 	npmCommand?: string[],
 	updatePackageTarget: SelfUpdatePackageTarget = packageName,
 ): SelfUpdateCommand | undefined {
+	const privateForkCommand = getPrivateForkSelfUpdateCommand(updatePackageTarget);
+	if (privateForkCommand) return privateForkCommand;
+
 	const method = detectInstallMethod();
 	const command = getSelfUpdateCommandForMethod(method, packageName, updatePackageTarget, npmCommand);
 	if (!command || !isManagedByGlobalPackageManager(method, packageName, npmCommand) || !isSelfUpdatePathWritable()) {
@@ -347,6 +373,9 @@ export function getSelfUpdateUnavailableInstruction(
 }
 
 export function getUpdateInstruction(packageName: string): string {
+	if (getPrivateForkUpdateScriptPath()) {
+		return `Run: ${APP_NAME} update`;
+	}
 	const method = detectInstallMethod();
 	const command = getSelfUpdateCommandForMethod(method, packageName);
 	if (command) {

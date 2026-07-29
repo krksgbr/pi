@@ -1510,6 +1510,18 @@ Register a command.
 
 If multiple extensions register the same command name, pi keeps them all and assigns numeric invocation suffixes in load order, for example `/review:1` and `/review:2`.
 
+In interactive mode, a command can explicitly replace a built-in slash command by setting `overrideBuiltin: true`. The extension command then owns the unsuffixed name and its autocomplete entry. Exactly one extension may claim a built-in name; ambiguous claims keep the built-in active and emit diagnostics. Built-in keyboard actions are not generally redirected, except `app.session.resume`, which follows an overridden `/resume` command.
+
+```typescript
+pi.registerCommand("resume", {
+  description: "Resume a repository-related session",
+  overrideBuiltin: true,
+  handler: async (_args, ctx) => {
+    // Show a custom picker, then call ctx.switchSession(...)
+  },
+});
+```
+
 ```typescript
 pi.registerCommand("stats", {
   description: "Show session statistics",
@@ -1571,6 +1583,20 @@ Use `sourceInfo` as the canonical provenance field. Do not infer ownership from 
 
 Built-in interactive commands (like `/model` and `/settings`) are not included here. They are handled only in interactive
 mode and would not execute if sent via `prompt`.
+
+### pi.invokeCommand(name, args?)
+
+Invoke a registered extension command directly by the invocation name returned from `pi.getCommands()`. The command runs immediately with a fresh `ExtensionCommandContext`; it does not pass through the interactive editor or user-input queue.
+
+```typescript
+pi.on("session_start", async () => {
+  await pi.invokeCommand("initialize-extension", "startup");
+});
+```
+
+Only extension commands are supported. Prompt templates, skills, and built-in interactive commands cannot be invoked through this API. Missing or ambiguous invocation names reject with an error.
+
+Always await the returned promise. When calling from an event handler, invoke only commands that can complete within that event; a command that waits for the same lifecycle event to finish can deadlock.
 
 ### pi.registerMessageRenderer(customType, renderer)
 

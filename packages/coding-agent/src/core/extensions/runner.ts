@@ -332,6 +332,7 @@ export class ExtensionRunner {
 		this.runtime.setActiveTools = actions.setActiveTools;
 		this.runtime.refreshTools = actions.refreshTools;
 		this.runtime.getCommands = actions.getCommands;
+		this.runtime.invokeCommand = actions.invokeCommand;
 		this.runtime.setModel = actions.setModel;
 		this.runtime.getThinkingLevel = actions.getThinkingLevel;
 		this.runtime.setThinkingLevel = actions.setThinkingLevel;
@@ -603,18 +604,27 @@ export class ExtensionRunner {
 	private resolveRegisteredCommands(): ResolvedCommand[] {
 		const commands: RegisteredCommand[] = [];
 		const counts = new Map<string, number>();
+		const overrideCounts = new Map<string, number>();
 
 		for (const ext of this.extensions) {
 			for (const command of ext.commands.values()) {
 				commands.push(command);
 				counts.set(command.name, (counts.get(command.name) ?? 0) + 1);
+				if (command.overrideBuiltin) {
+					overrideCounts.set(command.name, (overrideCounts.get(command.name) ?? 0) + 1);
+				}
 			}
 		}
 
+		const uniqueOverrideNames = new Set([...overrideCounts].filter(([, count]) => count === 1).map(([name]) => name));
 		const seen = new Map<string, number>();
-		const takenInvocationNames = new Set<string>();
+		const takenInvocationNames = new Set(uniqueOverrideNames);
 
 		return commands.map((command) => {
+			if (command.overrideBuiltin && uniqueOverrideNames.has(command.name)) {
+				return { ...command, invocationName: command.name };
+			}
+
 			const occurrence = (seen.get(command.name) ?? 0) + 1;
 			seen.set(command.name, occurrence);
 
@@ -651,6 +661,17 @@ export class ExtensionRunner {
 
 	getCommand(name: string): ResolvedCommand | undefined {
 		return this.resolveRegisteredCommands().find((command) => command.invocationName === name);
+	}
+
+	async invokeCommand(name: string, args = ""): Promise<void> {
+		this.assertActive();
+		const command = this.getCommand(name);
+		if (!command) {
+			throw new Error(
+				`Extension command "/${name}" was not found. Use an invocation name returned by pi.getCommands().`,
+			);
+		}
+		await command.handler(args, this.createCommandContext());
 	}
 
 	/**

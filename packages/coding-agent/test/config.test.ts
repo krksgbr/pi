@@ -1,10 +1,11 @@
 import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
-import { delimiter, join } from "path";
+import { delimiter, join, resolve } from "path";
 import { afterEach, describe, expect, test } from "vitest";
 import {
 	detectInstallMethod,
 	findNodePackageDir,
+	getPackageDir,
 	getSelfUpdateCommand,
 	getSelfUpdateUnavailableInstruction,
 	getUpdateInstruction,
@@ -179,6 +180,25 @@ describe("detectInstallMethod", () => {
 		expect(getUpdateInstruction("@earendil-works/pi-coding-agent")).toBe(
 			"Update @earendil-works/pi-coding-agent using the package manager, wrapper, or source checkout that provides this installation.",
 		);
+	});
+
+	test("self-updates the linked private source checkout", () => {
+		setExecPath("/usr/local/bin/node");
+		process.argv[1] = join(getPackageDir(), "src", "cli.ts");
+		const installSpec = "@earendil-works/pi-coding-agent@1.2.3";
+		const scriptPath = resolve(getPackageDir(), "..", "..", "scripts", "update-private-fork.mjs");
+
+		expect(
+			getSelfUpdateCommand("@earendil-works/pi-coding-agent", undefined, {
+				packageName: "@earendil-works/pi-coding-agent",
+				installSpec,
+			}),
+		).toEqual({
+			command: "/usr/local/bin/node",
+			args: [scriptPath, installSpec],
+			display: `/usr/local/bin/node ${scriptPath} ${installSpec}`,
+		});
+		expect(getUpdateInstruction("@earendil-works/pi-coding-agent")).toBe("Run: pi update");
 	});
 
 	test("self-updates npm installs from custom prefixes", () => {

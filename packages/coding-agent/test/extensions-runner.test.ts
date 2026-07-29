@@ -83,6 +83,7 @@ describe("ExtensionRunner", () => {
 		setActiveTools: () => {},
 		refreshTools: () => {},
 		getCommands: () => [],
+		invokeCommand: async () => {},
 		setModel: async () => false,
 		getThinkingLevel: () => "off",
 		setThinkingLevel: () => {},
@@ -497,6 +498,51 @@ describe("ExtensionRunner", () => {
 			expect(diagnostics).toEqual([]);
 			expect(runner.getCommand("shared-cmd:1")?.description).toBe("First command");
 			expect(runner.getCommand("shared-cmd:2")?.description).toBe("Second command");
+		});
+
+		it("reserves the unsuffixed name for one built-in override claimant", async () => {
+			const cmdCode = (description: string, overrideBuiltin: boolean) => `
+				export default function(pi) {
+					pi.registerCommand("resume", {
+						description: "${description}",
+						overrideBuiltin: ${overrideBuiltin},
+						handler: async () => {},
+					});
+				}
+			`;
+			fs.writeFileSync(path.join(extensionsDir, "cmd-a.ts"), cmdCode("Ordinary command", false));
+			fs.writeFileSync(path.join(extensionsDir, "cmd-b.ts"), cmdCode("Override command", true));
+
+			const result = await discoverAndLoadExtensions([], tempDir, tempDir);
+			const runner = new ExtensionRunner(result.extensions, result.runtime, tempDir, sessionManager, modelRegistry);
+			const commands = runner.getRegisteredCommands();
+
+			expect(commands.map((command) => command.invocationName)).toEqual(["resume:1", "resume"]);
+			expect(runner.getCommand("resume")?.description).toBe("Override command");
+			expect(runner.getCommand("resume")?.overrideBuiltin).toBe(true);
+		});
+
+		it("leaves multiple built-in override claimants suffixed and ambiguous", async () => {
+			const cmdCode = (description: string) => `
+				export default function(pi) {
+					pi.registerCommand("resume", {
+						description: "${description}",
+						overrideBuiltin: true,
+						handler: async () => {},
+					});
+				}
+			`;
+			fs.writeFileSync(path.join(extensionsDir, "cmd-a.ts"), cmdCode("First override"));
+			fs.writeFileSync(path.join(extensionsDir, "cmd-b.ts"), cmdCode("Second override"));
+
+			const result = await discoverAndLoadExtensions([], tempDir, tempDir);
+			const runner = new ExtensionRunner(result.extensions, result.runtime, tempDir, sessionManager, modelRegistry);
+
+			expect(runner.getRegisteredCommands().map((command) => command.invocationName)).toEqual([
+				"resume:1",
+				"resume:2",
+			]);
+			expect(runner.getCommand("resume")).toBeUndefined();
 		});
 	});
 
@@ -962,6 +1008,57 @@ describe("ExtensionRunner", () => {
 
 			await commandContext.fork("entry-2", { position: "at" });
 			expect(fork).toHaveBeenLastCalledWith("entry-2", { position: "at" });
+		});
+
+		it("invokes an extension command through ExtensionAPI with a fresh command context", async () => {
+			const extCode = `
+				export default function(pi) {
+					pi.registerCommand("activate", {
+						handler: async (args, ctx) => {
+							await ctx.waitForIdle();
+							ctx.ui.notify(args, "info");
+						},
+					});
+					pi.on("session_start", async () => {
+						await pi.invokeCommand("activate", "ready");
+					});
+				}
+			`;
+			fs.writeFileSync(path.join(extensionsDir, "invoke-command.ts"), extCode);
+			const result = await discoverAndLoadExtensions([], tempDir, tempDir);
+			const runner = new ExtensionRunner(result.extensions, result.runtime, tempDir, sessionManager, modelRegistry);
+			const waitForIdle = vi.fn(async () => {});
+			const notify = vi.fn();
+			runner.bindCore(
+				{
+					...extensionActions,
+					invokeCommand: (name, args) => runner.invokeCommand(name, args),
+				},
+				extensionContextActions,
+			);
+			runner.bindCommandContext({
+				waitForIdle,
+				newSession: async () => ({ cancelled: false }),
+				fork: async () => ({ cancelled: false }),
+				navigateTree: async () => ({ cancelled: false }),
+				switchSession: async () => ({ cancelled: false }),
+				reload: async () => {},
+			});
+			runner.setUIContext({ notify } as unknown as ExtensionUIContext, "print");
+
+			await runner.emit({ type: "session_start", reason: "startup" });
+
+			expect(waitForIdle).toHaveBeenCalledOnce();
+			expect(notify).toHaveBeenCalledWith("ready", "info");
+		});
+
+		it("rejects unknown extension command invocation names", async () => {
+			const runtime = createExtensionRuntime();
+			const runner = new ExtensionRunner([], runtime, tempDir, sessionManager, modelRegistry);
+
+			await expect(runner.invokeCommand("missing")).rejects.toThrow(
+				'Extension command "/missing" was not found. Use an invocation name returned by pi.getCommands().',
+			);
 		});
 	});
 

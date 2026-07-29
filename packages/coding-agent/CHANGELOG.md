@@ -1,5 +1,12 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+
+- Added explicit `overrideBuiltin` support for extension commands in interactive mode, including `/resume` keyboard-action routing.
+- Added `pi.invokeCommand()` for direct extension-command invocation with a fresh command context.
+
 ## [0.84.3] - 2026-08-24
 
 ### New Features
