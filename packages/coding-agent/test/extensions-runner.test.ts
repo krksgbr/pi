@@ -821,6 +821,25 @@ describe("ExtensionRunner", () => {
 				systemPrompt: "base\nfirst\nsecond",
 			});
 		});
+
+		it("passes resource loading disablement flags to handlers", async () => {
+			const extCode = `
+				export default function(pi) {
+					pi.on("before_agent_start", async (event) => ({
+						systemPrompt: String(event.noSkills) + ":" + String(event.noContextFiles),
+					}));
+				}
+			`;
+			fs.writeFileSync(path.join(extensionsDir, "before-agent-start-flags.ts"), extCode);
+
+			const result = await discoverAndLoadExtensions([], tempDir, tempDir);
+			const runner = new ExtensionRunner(result.extensions, result.runtime, tempDir, sessionManager, modelRegistry);
+			runner.bindCore(extensionActions, extensionContextActions);
+
+			const chained = await runner.emitBeforeAgentStart("hello", undefined, "base", { cwd: tempDir }, true, false);
+
+			expect(chained?.systemPrompt).toBe("true:false");
+		});
 	});
 
 	describe("tool_result chaining", () => {

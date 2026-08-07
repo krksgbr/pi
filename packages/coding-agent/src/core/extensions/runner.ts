@@ -1104,6 +1104,8 @@ export class ExtensionRunner {
 		images: ImageContent[] | undefined,
 		systemPrompt: string,
 		systemPromptOptions: BuildSystemPromptOptions,
+		noSkills = false,
+		noContextFiles = false,
 	): Promise<BeforeAgentStartCombinedResult | undefined> {
 		let currentSystemPrompt = systemPrompt;
 		const ctx = Object.defineProperties(
@@ -1129,6 +1131,8 @@ export class ExtensionRunner {
 						images,
 						systemPrompt: currentSystemPrompt,
 						systemPromptOptions,
+						noSkills,
+						noContextFiles,
 					};
 					const handlerResult = await handler(event, ctx);
 
@@ -1168,6 +1172,7 @@ export class ExtensionRunner {
 	async emitResourcesDiscover(
 		cwd: string,
 		reason: ResourcesDiscoverEvent["reason"],
+		noSkills = false,
 	): Promise<{
 		skillPaths: Array<{ path: string; extensionPath: string }>;
 		promptPaths: Array<{ path: string; extensionPath: string }>;
@@ -1184,7 +1189,12 @@ export class ExtensionRunner {
 
 			for (const handler of handlers) {
 				try {
-					const event: ResourcesDiscoverEvent = { type: "resources_discover", cwd, reason };
+					const event: ResourcesDiscoverEvent = {
+						type: "resources_discover",
+						cwd,
+						reason,
+						noSkills,
+					};
 					const handlerResult = await handler(event, ctx);
 					const result = handlerResult as ResourcesDiscoverResult | undefined;
 

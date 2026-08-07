@@ -547,6 +547,8 @@ export interface ResourcesDiscoverEvent {
 	type: "resources_discover";
 	cwd: string;
 	reason: "startup" | "reload";
+	/** Whether skill discovery and loading were disabled with --no-skills. */
+	noSkills: boolean;
 }
 
 /** Result from resources_discover event handler */
@@ -724,6 +726,10 @@ export interface BeforeAgentStartEvent {
 	systemPrompt: string;
 	/** Structured options used to build the system prompt. Extensions can inspect this to understand what Pi loaded without re-discovering resources. */
 	systemPromptOptions: BuildSystemPromptOptions;
+	/** Whether skills were disabled with --no-skills. */
+	noSkills: boolean;
+	/** Whether context files were disabled with --no-context-files. */
+	noContextFiles: boolean;
 }
 
 /** Fired when an agent loop starts */

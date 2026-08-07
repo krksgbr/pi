@@ -40,6 +40,8 @@ export interface ResourceLoaderReloadOptions {
 export interface ResourceLoader {
 	getExtensions(): LoadExtensionsResult;
 	getSkills(): { skills: Skill[]; diagnostics: ResourceDiagnostic[] };
+	isSkillsDisabled?(): boolean;
+	isContextFilesDisabled?(): boolean;
 	getPrompts(): { prompts: PromptTemplate[]; diagnostics: ResourceDiagnostic[] };
 	getThemes(): { themes: Theme[]; diagnostics: ResourceDiagnostic[] };
 	getAgentsFiles(): { agentsFiles: Array<{ path: string; content: string }> };
@@ -309,6 +311,13 @@ export class DefaultResourceLoader implements ResourceLoader {
 		return { skills: this.skills, diagnostics: this.skillDiagnostics };
 	}
 
+	isSkillsDisabled(): boolean {
+		return this.noSkills;
+	}
+
+	isContextFilesDisabled(): boolean {
+		return this.noContextFiles;
+	}
 	getPrompts(): { prompts: PromptTemplate[]; diagnostics: ResourceDiagnostic[] } {
 		return { prompts: this.prompts, diagnostics: this.promptDiagnostics };
 	}

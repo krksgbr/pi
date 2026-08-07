@@ -1246,6 +1246,8 @@ export class AgentSession {
 				currentImages,
 				this._baseSystemPrompt,
 				this._baseSystemPromptOptions,
+				this._resourceLoader.isSkillsDisabled?.() ?? false,
+				this._resourceLoader.isContextFilesDisabled?.() ?? false,
 			);
 			// Add all custom messages from extensions
 			if (result?.messages) {
@@ -2392,6 +2394,7 @@ export class AgentSession {
 		const { skillPaths, promptPaths, themePaths } = await this._extensionRunner.emitResourcesDiscover(
 			this._cwd,
 			reason,
+			this._resourceLoader.isSkillsDisabled?.() ?? false,
 		);
 
 		if (skillPaths.length === 0 && promptPaths.length === 0 && themePaths.length === 0) {
