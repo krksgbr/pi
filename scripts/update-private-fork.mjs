@@ -105,6 +105,9 @@ export function main(args = process.argv.slice(2)) {
 		console.warn("Pi updated locally, but pushing the private runtime bookmarks failed.");
 	}
 	console.log(`Private Pi updated to ${tag}.`);
+	console.log(
+		"Restart any already-running Pi sessions before further prompting: the update rebuilt runtime modules in place, and a running process can mix cached modules with newly built files.",
+	);
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === scriptPath) {
