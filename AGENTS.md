@@ -37,7 +37,7 @@
 - For `packages/coding-agent/test/suite/`, use `test/suite/harness.ts` + the faux provider. No real provider APIs, keys, or paid tokens.
 - Put issue-specific regressions under `packages/coding-agent/test/suite/regressions/` named `<issue-number>-<short-slug>.test.ts`.
 - For ad-hoc scripts, `write` them to a temp file (e.g. `/tmp`), run, edit if needed, remove when done. Don't embed multi-line scripts in `bash` commands.
-- Never commit unless the user asks.
+- In this private fork, commit completed, verified work autonomously. Leave changes uncommitted only when the user asks, verification is failing, or the work is intentionally incomplete.
 
 ## Dependency and Install Security
 
