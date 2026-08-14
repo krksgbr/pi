@@ -211,7 +211,7 @@ export interface ExtensionUIContext {
 		},
 	): Promise<T>;
 
-	/** Paste text into the editor, triggering paste handling (collapse for large content). */
+	/** Insert text at the active editor's current cursor without submitting. */
 	pasteToEditor(text: string): void;
 
 	/** Set the text in the core input editor. */

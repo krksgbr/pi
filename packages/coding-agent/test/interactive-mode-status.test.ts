@@ -5,7 +5,7 @@ import { beforeAll, describe, expect, test, vi } from "vitest";
 import { type Component, Container, type Focusable, type TUI } from "../../tui/src/tui.ts";
 import { TuiMainScreen } from "../../tui/src/tui-main-screen.ts";
 import { VirtualTerminal } from "../../tui/test/virtual-terminal.ts";
-import type { AutocompleteProviderFactory } from "../src/core/extensions/types.ts";
+import type { AutocompleteProviderFactory, ExtensionUIContext } from "../src/core/extensions/types.ts";
 import type { SourceInfo } from "../src/core/source-info.ts";
 import type { AuthSelectorProvider } from "../src/modes/interactive/components/oauth-selector.ts";
 import { InteractiveMode } from "../src/modes/interactive/interactive-mode.ts";
@@ -228,6 +228,56 @@ describe("InteractiveMode.createExtensionUIContext setTheme", () => {
 	});
 });
 
+describe("InteractiveMode.createExtensionUIContext pasteToEditor", () => {
+	type PasteEditor = {
+		handleInput(data: string): void;
+		insertTextAtCursor?(text: string): void;
+	};
+
+	function createContext(editor: PasteEditor): {
+		uiContext: ExtensionUIContext;
+		requestRender: ReturnType<typeof vi.fn>;
+	} {
+		const requestRender = vi.fn();
+		const fakeThis = { editor, ui: { requestRender } };
+		const createExtensionUIContext = (
+			InteractiveMode as unknown as {
+				prototype: { createExtensionUIContext(this: typeof fakeThis): ExtensionUIContext };
+			}
+		).prototype.createExtensionUIContext;
+		return { uiContext: createExtensionUIContext.call(fakeThis), requestRender };
+	}
+
+	test("uses a custom editor's programmatic insertion without routing through modal input", () => {
+		let text = "draft";
+		const editor = {
+			mode: "normal" as const,
+			handleInput: vi.fn(),
+			insertTextAtCursor: vi.fn((inserted: string) => {
+				text += inserted;
+			}),
+		};
+		const { uiContext, requestRender } = createContext(editor);
+
+		uiContext.pasteToEditor("\n\n> quote");
+
+		expect(text).toBe("draft\n\n> quote");
+		expect(editor.insertTextAtCursor).toHaveBeenCalledWith("\n\n> quote");
+		expect(editor.handleInput).not.toHaveBeenCalled();
+		expect(editor.mode).toBe("normal");
+		expect(requestRender).toHaveBeenCalledTimes(1);
+	});
+
+	test("falls back to bracketed paste input when programmatic insertion is unavailable", () => {
+		const editor = { handleInput: vi.fn() };
+		const { uiContext, requestRender } = createContext(editor);
+
+		uiContext.pasteToEditor("quoted text");
+
+		expect(editor.handleInput).toHaveBeenCalledWith("\x1b[200~quoted text\x1b[201~");
+		expect(requestRender).toHaveBeenCalledTimes(1);
+	});
+});
 describe("InteractiveMode.showExtensionCustom", () => {
 	beforeAll(() => {
 		initTheme("dark");
@@ -415,6 +465,7 @@ describe("InteractiveMode.createBaseAutocompleteProvider", () => {
 			skillCommands: Map<string, string>;
 			sessionManager: { getCwd: () => string };
 			fdPath: null;
+			getBuiltInCommandOverrideNames: () => Set<string>;
 		};
 
 		const createBaseAutocompleteProvider = (
@@ -438,6 +489,7 @@ describe("InteractiveMode.createBaseAutocompleteProvider", () => {
 			skillCommands: new Map(),
 			sessionManager: { getCwd: () => "/tmp" },
 			fdPath: null,
+			getBuiltInCommandOverrideNames: () => new Set<string>(),
 		};
 
 		const provider = createBaseAutocompleteProvider.call(fakeThis);
@@ -465,6 +517,7 @@ describe("InteractiveMode.createBaseAutocompleteProvider", () => {
 			skillCommands: Map<string, string>;
 			sessionManager: { getCwd: () => string };
 			fdPath: null;
+			getBuiltInCommandOverrideNames: () => Set<string>;
 			getLoginProviderOptions: () => AuthSelectorProvider[];
 		};
 
@@ -485,6 +538,7 @@ describe("InteractiveMode.createBaseAutocompleteProvider", () => {
 			skillCommands: new Map(),
 			sessionManager: { getCwd: () => "/tmp" },
 			fdPath: null,
+			getBuiltInCommandOverrideNames: () => new Set<string>(),
 			getLoginProviderOptions: () => [
 				{ id: "anthropic", name: "Anthropic", authType: "oauth" },
 				{ id: "anthropic", name: "Anthropic", authType: "api_key" },
