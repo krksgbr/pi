@@ -21,6 +21,13 @@ export interface BranchSummarySettings {
 	skipPrompt?: boolean; // default: false - when true, skips "Summarize branch?" prompt and defaults to no summary
 }
 
+export interface SummarizationSettings {
+	/** Optional provider/model reference, e.g. "openai-codex/gpt-5.6-luna". */
+	model?: string;
+	/** Thinking level for compaction and branch-summary requests. */
+	thinkingLevel?: ThinkingLevel;
+}
+
 export interface ProviderRetrySettings {
 	timeoutMs?: number; // SDK/provider request timeout in milliseconds
 	maxRetries?: number; // SDK/provider retry attempts
@@ -100,6 +107,7 @@ export interface Settings {
 	theme?: string;
 	compaction?: CompactionSettings;
 	branchSummary?: BranchSummarySettings;
+	summarization?: SummarizationSettings;
 	retry?: RetrySettings;
 	hideThinkingBlock?: boolean;
 	showCacheMissNotices?: boolean; // default: false - show prompt-cache miss and compaction cost notices
@@ -856,6 +864,10 @@ export class SettingsManager {
 			reserveTokens: this.settings.branchSummary?.reserveTokens ?? 16384,
 			skipPrompt: this.settings.branchSummary?.skipPrompt ?? false,
 		};
+	}
+
+	getSummarizationSettings(): SummarizationSettings {
+		return { ...this.settings.summarization };
 	}
 
 	getBranchSummarySkipPrompt(): boolean {

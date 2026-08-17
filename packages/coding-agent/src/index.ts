@@ -261,6 +261,7 @@ export {
 	type RetrySettings,
 	SettingsManager,
 	type SettingsManagerCreateOptions,
+	type SummarizationSettings,
 	type TuiMode,
 } from "./core/settings-manager.ts";
 // Skills

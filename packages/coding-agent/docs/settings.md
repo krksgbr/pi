@@ -134,6 +134,24 @@ Set `PI_SKIP_VERSION_CHECK=1` to disable the Pi version update check. Use `--off
 | `branchSummary.reserveTokens` | number | `16384` | Tokens reserved for branch summarization |
 | `branchSummary.skipPrompt` | boolean | `false` | Skip "Summarize branch?" prompt on `/tree` navigation (defaults to no summary) |
 
+### Summarization
+
+Use a separate model and thinking level for both compaction and branch summaries. `model` accepts a canonical `provider/model-id` reference; when unset, compaction uses the active model and branch summaries keep their existing no-reasoning behavior.
+
+| Setting | Type | Default | Description |
+|---------|------|---------|-------------|
+| `summarization.model` | string | active model | Model used to generate summaries, e.g. `"openai-codex/gpt-5.6-luna"` |
+| `summarization.thinkingLevel` | string | compaction: active level; branch summary: off | Thinking level for summary requests |
+
+```json
+{
+  "summarization": {
+    "model": "openai-codex/gpt-5.6-luna",
+    "thinkingLevel": "high"
+  }
+}
+```
+
 ### Retry
 
 | Setting | Type | Default | Description |

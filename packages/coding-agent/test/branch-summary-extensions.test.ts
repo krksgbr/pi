@@ -1,4 +1,4 @@
-import type { Usage } from "@earendil-works/pi-ai/compat";
+import { fauxAssistantMessage, type Usage } from "@earendil-works/pi-ai/compat";
 import { afterEach, describe, expect, it } from "vitest";
 import { createHarness, type Harness } from "./suite/harness.ts";
 import { assistantMsg, userMsg } from "./utilities.ts";
@@ -53,5 +53,77 @@ describe("Branch summary extensions", () => {
 		const stats = harness.session.getSessionStats();
 		expect(stats.tokens).toEqual({ input: 12, output: 22, cacheRead: 30, cacheWrite: 40, total: 104 });
 		expect(stats.cost).toBe(1);
+	});
+
+	it("uses the configured summarization model and thinking level", async () => {
+		let requestModelId: string | undefined;
+		let requestThinkingLevel: string | undefined;
+		const harness = await createHarness({
+			models: [{ id: "active" }, { id: "summary", reasoning: true }],
+			settings: {
+				summarization: {
+					model: "faux/summary",
+					thinkingLevel: "high",
+				},
+			},
+		});
+		harnesses.push(harness);
+		harness.faux.setResponses([
+			(_context, options, _state, model) => {
+				requestModelId = model.id;
+				requestThinkingLevel = options?.reasoning;
+				return fauxAssistantMessage("Configured branch summary");
+			},
+		]);
+
+		const targetId = harness.sessionManager.appendMessage(userMsg("first branch"));
+		harness.sessionManager.appendMessage(assistantMsg("first reply"));
+		harness.sessionManager.appendMessage(userMsg("abandoned branch work"));
+		harness.sessionManager.appendMessage(assistantMsg("abandoned reply"));
+
+		const result = await harness.session.navigateTree(targetId, { summarize: true });
+
+		expect(result.summaryEntry?.summary).toContain("Configured branch summary");
+		expect(requestModelId).toBe("summary");
+		expect(requestThinkingLevel).toBe("high");
+	});
+
+	it("uses the configured summarization model and thinking level for compaction", async () => {
+		let requestModelId: string | undefined;
+		let requestThinkingLevel: string | undefined;
+		const harness = await createHarness({
+			models: [{ id: "active" }, { id: "summary", reasoning: true }],
+			settings: {
+				compaction: { keepRecentTokens: 1 },
+				summarization: {
+					model: "faux/summary",
+					thinkingLevel: "high",
+				},
+			},
+		});
+		harnesses.push(harness);
+		harness.faux.setResponses([
+			(_context, options, _state, model) => {
+				requestModelId = model.id;
+				requestThinkingLevel = options?.reasoning;
+				return fauxAssistantMessage("Configured compaction summary");
+			},
+			(_context, options, _state, model) => {
+				requestModelId = model.id;
+				requestThinkingLevel = options?.reasoning;
+				return fauxAssistantMessage("Configured compaction turn summary");
+			},
+		]);
+
+		harness.sessionManager.appendMessage(userMsg("first message"));
+		harness.sessionManager.appendMessage(assistantMsg("first reply"));
+		harness.sessionManager.appendMessage(userMsg("second message"));
+		harness.sessionManager.appendMessage(assistantMsg("second reply"));
+
+		const result = await harness.session.compact();
+
+		expect(result.summary).toContain("Configured compaction summary");
+		expect(requestModelId).toBe("summary");
+		expect(requestThinkingLevel).toBe("high");
 	});
 });

@@ -6,6 +6,7 @@
 
 - Added explicit `overrideBuiltin` support for extension commands in interactive mode, including `/resume` keyboard-action routing.
 - Added `pi.invokeCommand()` for direct extension-command invocation with a fresh command context.
+- Added configurable summarization model and thinking level for compaction and branch summaries.
 
 ### Fixed
 

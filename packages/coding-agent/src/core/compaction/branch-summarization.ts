@@ -5,7 +5,7 @@
  * a summary of the branch being left so context isn't lost.
  */
 
-import type { AgentMessage, StreamFn } from "@earendil-works/pi-agent-core";
+import type { AgentMessage, StreamFn, ThinkingLevel } from "@earendil-works/pi-agent-core";
 import type { RetryCallbacks, RetryPolicy } from "@earendil-works/pi-ai";
 import { contentText } from "@earendil-works/pi-ai";
 import type { Model, SimpleStreamOptions, Usage } from "@earendil-works/pi-ai/compat";
@@ -81,6 +81,8 @@ export interface GenerateBranchSummaryOptions {
 	replaceInstructions?: boolean;
 	/** Tokens reserved for prompt + LLM response (default 16384) */
 	reserveTokens?: number;
+	/** Optional thinking level for the summarization request. */
+	thinkingLevel?: ThinkingLevel;
 	/** Optional session stream function. Used to preserve SDK request behavior without mutating agent state. */
 	streamFn?: StreamFn;
 	/** Retry policy for transient summarization errors. Reuses coding-agent's `settings.retry`. */
@@ -303,6 +305,7 @@ export async function generateBranchSummary(
 		customInstructions,
 		replaceInstructions,
 		reserveTokens = 16384,
+		thinkingLevel,
 		streamFn,
 		retry,
 		callbacks,
@@ -347,7 +350,14 @@ export async function generateBranchSummary(
 	// without running through agent state/events. Retried via completeSummarization
 	// so transient stream drops reuse the configured retry policy.
 	const context = { systemPrompt: SUMMARIZATION_SYSTEM_PROMPT, messages: summarizationMessages };
-	const requestOptions: SimpleStreamOptions = { apiKey, headers, env, signal, maxTokens: 2048 };
+	const requestOptions: SimpleStreamOptions = {
+		apiKey,
+		headers,
+		env,
+		signal,
+		maxTokens: 2048,
+		...(model.reasoning && thinkingLevel && thinkingLevel !== "off" ? { reasoning: thinkingLevel } : {}),
+	};
 	const response = await completeSummarization(model, context, requestOptions, streamFn, retry, callbacks);
 
 	// Check if aborted or errored

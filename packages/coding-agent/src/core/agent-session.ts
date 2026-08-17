@@ -26,6 +26,7 @@ import type {
 } from "@earendil-works/pi-agent-core";
 import { contentText } from "@earendil-works/pi-ai";
 import type {
+	Api,
 	AssistantMessage,
 	AuthResult,
 	ImageContent,
@@ -97,6 +98,7 @@ import {
 import { emitSessionShutdownEvent } from "./extensions/runner.ts";
 import type { BashExecutionMessage, CustomMessage } from "./messages.ts";
 import { ModelRegistry } from "./model-registry.ts";
+import { findExactModelReferenceMatch } from "./model-resolver.ts";
 import type { ModelRuntime } from "./model-runtime.ts";
 import { expandPromptTemplate, type PromptTemplate } from "./prompt-templates.ts";
 import type { ResourceExtensionPaths, ResourceLoader } from "./resource-loader.ts";
@@ -446,6 +448,21 @@ export class AgentSession {
 			);
 		}
 		throw new Error(formatNoApiKeyFoundMessage(model.provider));
+	}
+
+	private _getSummarizationModel(): Model<Api> {
+		const configuredModel = this.settingsManager.getSummarizationSettings().model;
+		if (configuredModel) {
+			const model = findExactModelReferenceMatch(configuredModel, [...this._modelRuntime.getModels()]);
+			if (!model) {
+				throw new Error(`Configured summarization model "${configuredModel}" was not found.`);
+			}
+			return model;
+		}
+
+		const model = this.model;
+		if (!model) throw new Error(formatNoModelSelectedMessage());
+		return model;
 	}
 
 	private async _getSummarizationRequestAuth(model: Model<any>): Promise<{
@@ -1839,7 +1856,7 @@ export class AgentSession {
 			headers,
 			customInstructions,
 			signal,
-			this.thinkingLevel,
+			this.settingsManager.getSummarizationSettings().thinkingLevel ?? this.thinkingLevel,
 			this.agent.streamFunction,
 			env,
 			this.settingsManager.getRetrySettings(),
@@ -1870,11 +1887,13 @@ export class AgentSession {
 		let fromExtension = false;
 
 		try {
-			if (!this.model) {
-				throw new Error(formatNoModelSelectedMessage());
-			}
-
-			const { model: requestModel, apiKey, headers, env } = await this._getSummarizationRequestAuth(this.model);
+			const summarizationModel = this._getSummarizationModel();
+			const {
+				model: requestModel,
+				apiKey,
+				headers,
+				env,
+			} = await this._getSummarizationRequestAuth(summarizationModel);
 
 			const pathEntries = this.sessionManager.getBranch();
 			const settings = this.settingsManager.getCompactionSettings();
@@ -2175,7 +2194,13 @@ export class AgentSession {
 				return false;
 			}
 
-			const { model: requestModel, apiKey, headers, env } = await this._getSummarizationRequestAuth(this.model);
+			const summarizationModel = this._getSummarizationModel();
+			const {
+				model: requestModel,
+				apiKey,
+				headers,
+				env,
+			} = await this._getSummarizationRequestAuth(summarizationModel);
 
 			const pathEntries = this.sessionManager.getBranch();
 
@@ -3046,8 +3071,9 @@ export class AgentSession {
 			return { cancelled: false };
 		}
 
-		// Model required for summarization
-		if (options.summarize && !this.model) {
+		// A configured summarization model can be used even when the active model is unavailable.
+		const summarizationSettings = this.settingsManager.getSummarizationSettings();
+		if (options.summarize && !this.model && !summarizationSettings.model) {
 			throw new Error("No model available for summarization");
 		}
 
@@ -3120,8 +3146,13 @@ export class AgentSession {
 			let summaryDetails: unknown;
 			let summaryUsage: Usage | undefined;
 			if (options.summarize && entriesToSummarize.length > 0 && !extensionSummary) {
-				const model = this.model!;
-				const { model: requestModel, apiKey, headers, env } = await this._getSummarizationRequestAuth(model);
+				const summarizationModel = this._getSummarizationModel();
+				const {
+					model: requestModel,
+					apiKey,
+					headers,
+					env,
+				} = await this._getSummarizationRequestAuth(summarizationModel);
 				const branchSummarySettings = this.settingsManager.getBranchSummarySettings();
 				const result = await generateBranchSummary(entriesToSummarize, {
 					model: requestModel,
@@ -3132,6 +3163,7 @@ export class AgentSession {
 					customInstructions,
 					replaceInstructions,
 					reserveTokens: branchSummarySettings.reserveTokens,
+					thinkingLevel: summarizationSettings.thinkingLevel,
 					streamFn: this.agent.streamFunction,
 					retry: this.settingsManager.getRetrySettings(),
 					callbacks: this._summarizationRetryCallbacks({ source: "branchSummary" }),
