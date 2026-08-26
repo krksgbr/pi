@@ -83,4 +83,70 @@ describe("strict model generation", () => {
 		);
 		expect(generatedPaths.map((path) => readFileSync(join(packageRoot, path), "utf8"))).toEqual(sourceBefore);
 	});
+
+	it("derives only missing Cloudflare Gateway Workers AI routes", () => {
+		const fixtureRoot = mkdtempSync(join(tmpdir(), "pi-generate-models-"));
+		temporaryRoots.push(fixtureRoot);
+		const isolatedPackageRoot = join(fixtureRoot, "package");
+		mkdirSync(isolatedPackageRoot);
+		for (const entry of ["package.json", "scripts", "src"]) {
+			cpSync(join(packageRoot, entry), join(isolatedPackageRoot, entry), { recursive: true });
+		}
+
+		const model = (name: string, toolCall: boolean) => ({
+			name,
+			tool_call: toolCall,
+			reasoning: false,
+			modalities: { input: ["text"] },
+			cost: { input: 1, output: 2 },
+			limit: { context: 4096, output: 1024 },
+		});
+		const catalog = {
+			"cloudflare-workers-ai": {
+				models: {
+					omitted: model("Workers omitted", true),
+					explicit: model("Workers explicit", true),
+					blocked: model("Workers blocked", true),
+				},
+			},
+			"cloudflare-ai-gateway": {
+				models: {
+					"workers-ai/explicit": model("Gateway explicit", true),
+					"workers-ai/blocked": model("Gateway blocked", false),
+				},
+			},
+		};
+		const preloadPath = join(fixtureRoot, "mock-model-apis.mjs");
+		writeFileSync(
+			preloadPath,
+			`const catalog = ${JSON.stringify(catalog)};\n` +
+				`globalThis.fetch = async (input) => {\n` +
+				`  const url = String(input);\n` +
+				`  if (url === "https://models.dev/api.json") return new Response(JSON.stringify(catalog), { status: 200 });\n` +
+				`  if (url === "https://openrouter.ai/api/v1/models" || url.endsWith("/models")) {\n` +
+				`    return new Response(JSON.stringify({ data: [] }), { status: 200 });\n` +
+				`  }\n` +
+				`  throw new Error(\`Unexpected fetch: \${url}\`);\n` +
+				`};\n`,
+		);
+
+		const result = spawnSync(
+			process.execPath,
+			["--import", pathToFileURL(preloadPath).href, "scripts/generate-models.ts"],
+			{
+				cwd: isolatedPackageRoot,
+				encoding: "utf8",
+				timeout: 10_000,
+			},
+		);
+
+		expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
+		const generated = JSON.parse(
+			readFileSync(join(isolatedPackageRoot, "src/providers/data/cloudflare-ai-gateway.json"), "utf8"),
+		) as Record<string, Record<string, { name: string }>>;
+		const generatedModels = generated["openai-completions"];
+		expect(Object.keys(generatedModels).sort()).toEqual(["workers-ai/explicit", "workers-ai/omitted"]);
+		expect(generatedModels["workers-ai/explicit"].name).toBe("Gateway explicit");
+		expect(generatedModels["workers-ai/omitted"].name).toBe("Workers omitted");
+	});
 });

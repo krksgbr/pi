@@ -1722,6 +1722,26 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 			}
 		}
 
+		// models.dev may omit Cloudflare Gateway's virtual Workers AI routes. Preserve
+		// those supported /compat models by deriving any missing entries from the
+		// canonical Workers AI catalog while preferring explicit gateway metadata.
+		const explicitGatewayWorkersModelIds = new Set(
+			Object.keys(data["cloudflare-ai-gateway"]?.models ?? {}).filter((id) => id.startsWith("workers-ai/")),
+		);
+		for (const workerModel of models.filter((model) => model.provider === "cloudflare-workers-ai")) {
+			const id = `workers-ai/${workerModel.id}`;
+			if (explicitGatewayWorkersModelIds.has(id)) continue;
+			models.push({
+				...workerModel,
+				id,
+				provider: "cloudflare-ai-gateway",
+				baseUrl: CLOUDFLARE_AI_GATEWAY_COMPAT_BASE_URL,
+				compat: { ...workerModel.compat, sendSessionAffinityHeaders: true },
+			});
+			const sourceModel = data["cloudflare-workers-ai"]?.models?.[workerModel.id] as ModelsDevModel | undefined;
+			if (sourceModel) recordModelsDevReasoningOptions("cloudflare-ai-gateway", id, sourceModel);
+		}
+
 		// Process xAi models
 		if (data.xai?.models) {
 			for (const [modelId, model] of Object.entries(data.xai.models)) {
