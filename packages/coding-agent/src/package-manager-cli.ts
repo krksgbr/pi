@@ -688,9 +688,19 @@ async function getSelfUpdatePlan(force: boolean): Promise<SelfUpdatePlan> {
 	return { packageName, installSpec, version: latestRelease.version, shouldRun: false };
 }
 
+class SelfUpdateProcessError extends Error {
+	readonly exitCode: number;
+
+	constructor(message: string, exitCode: number) {
+		super(message);
+		this.name = "SelfUpdateProcessError";
+		this.exitCode = exitCode;
+	}
+}
+
 async function runSelfUpdate(command: SelfUpdateCommand): Promise<void> {
-	console.log(chalk.dim(`Updating ${APP_NAME} with ${command.display}...`));
-	for (const step of command.steps ?? [command]) {
+	const steps = command.kind === "package-manager" ? (command.steps ?? [command]) : [command];
+	for (const step of steps) {
 		await new Promise<void>((resolve, reject) => {
 			const child = spawnProcess(step.command, step.args, {
 				stdio: "inherit",
@@ -702,9 +712,9 @@ async function runSelfUpdate(command: SelfUpdateCommand): Promise<void> {
 				if (code === 0) {
 					resolve();
 				} else if (signal) {
-					reject(new Error(`${step.display} terminated by signal ${signal}`));
+					reject(new SelfUpdateProcessError(`${step.display} terminated by signal ${signal}`, 1));
 				} else {
-					reject(new Error(`${step.display} exited with code ${code ?? "unknown"}`));
+					reject(new SelfUpdateProcessError(`${step.display} exited with code ${code ?? "unknown"}`, code ?? 1));
 				}
 			});
 		});
@@ -1051,15 +1061,6 @@ export async function handlePackageCommand(
 						return true;
 					}
 
-					const installMethod = detectInstallMethod();
-					if (process.platform === "win32" && installMethod !== "npm" && installMethod !== "pnpm") {
-						console.error(
-							chalk.red(`${APP_NAME} self-update on Windows is only supported for npm and pnpm installs.`),
-						);
-						console.error(chalk.dim(`Detected install method: ${installMethod}. Update ${APP_NAME} manually.`));
-						process.exitCode = 1;
-						return true;
-					}
 					const selfUpdateTarget = {
 						packageName: selfUpdatePlan.packageName,
 						installSpec: selfUpdatePlan.installSpec,
@@ -1073,7 +1074,34 @@ export async function handlePackageCommand(
 					if (selfUpdatePlan.note) {
 						printSelfUpdateNote(selfUpdatePlan.note);
 					}
+
+					if (selfUpdateCommand.kind === "source-owner") {
+						try {
+							await runSelfUpdate(selfUpdateCommand);
+						} catch (error: unknown) {
+							if (error instanceof SelfUpdateProcessError) {
+								process.exitCode = error.exitCode;
+							} else {
+								const message = error instanceof Error ? error.message : "Unknown source update error";
+								console.error(chalk.red(`Error: ${message}`));
+								process.exitCode = 1;
+							}
+						}
+						return true;
+					}
+
+					const installMethod = detectInstallMethod();
+					if (process.platform === "win32" && installMethod !== "npm" && installMethod !== "pnpm") {
+						console.error(
+							chalk.red(`${APP_NAME} self-update on Windows is only supported for npm and pnpm installs.`),
+						);
+						console.error(chalk.dim(`Detected install method: ${installMethod}. Update ${APP_NAME} manually.`));
+						process.exitCode = 1;
+						return true;
+					}
+
 					try {
+						console.log(chalk.dim(`Updating ${APP_NAME} with ${selfUpdateCommand.display}...`));
 						if (installMethod === "npm") {
 							prepareWindowsNpmSelfUpdate();
 						}

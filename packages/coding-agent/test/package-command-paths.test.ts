@@ -34,6 +34,7 @@ describe("package commands", () => {
 	let originalPath: string | undefined;
 	let originalExitCode: typeof process.exitCode;
 	let originalExecPath: string;
+	let originalArgv1: string | undefined;
 
 	function getNewerPatchVersion(): string {
 		const [major = "0", minor = "0", patch = "0"] = VERSION.split(".");
@@ -149,6 +150,7 @@ if (process.platform !== "win32") fs.chmodSync(piPath, 0o755);
 		originalPath = process.env.PATH;
 		originalExitCode = process.exitCode;
 		originalExecPath = process.execPath;
+		originalArgv1 = process.argv[1];
 		process.exitCode = undefined;
 		vi.spyOn(process, "exit").mockImplementation(((code?: string | number | null) => {
 			if (code === undefined || code === null || Number(code) === 0) {
@@ -184,6 +186,8 @@ if (process.platform !== "win32") fs.chmodSync(piPath, 0o755);
 			process.env.PATH = originalPath;
 		}
 		Object.defineProperty(process, "execPath", { value: originalExecPath, configurable: true });
+		if (originalArgv1 === undefined) process.argv.splice(1, 1);
+		else process.argv[1] = originalArgv1;
 		rmSync(tempDir, { recursive: true, force: true });
 	});
 
@@ -606,6 +610,46 @@ if (process.platform !== "win32") fs.chmodSync(piPath, 0o755);
 		}
 	});
 
+	it("delegates source-owned updates without translating owner status or output", async () => {
+		const targetVersion = getNewerPatchVersion();
+		const selfPackageDir = join(tempDir, "source-owner", "packages", "coding-agent");
+		const entrypoint = join(selfPackageDir, "dist", "cli.js");
+		const ownerScript = join(tempDir, "source-owner", "owner.mjs");
+		const recordPath = join(tempDir, "source-owner-args.json");
+		mkdirSync(join(selfPackageDir, "dist"), { recursive: true });
+		writeFileSync(entrypoint, "");
+		writeFileSync(
+			join(selfPackageDir, "package.json"),
+			JSON.stringify({
+				name: PACKAGE_NAME,
+				version: VERSION,
+				piConfig: { selfUpdateScript: "../../owner.mjs" },
+			}),
+		);
+		writeFileSync(
+			ownerScript,
+			`import fs from "node:fs"; fs.writeFileSync(${JSON.stringify(recordPath)}, JSON.stringify(process.argv.slice(2))); process.exit(23);`,
+		);
+		process.env.PI_PACKAGE_DIR = selfPackageDir;
+		process.argv[1] = entrypoint;
+		vi.stubGlobal(
+			"fetch",
+			vi.fn(async () => Response.json({ version: targetVersion })),
+		);
+		const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+		const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+		await expect(runPackageCommandDirectly(["update", "--self"])).resolves.toBeUndefined();
+
+		expect(JSON.parse(readFileSync(recordPath, "utf8")) as string[]).toEqual([`${PACKAGE_NAME}@${targetVersion}`]);
+		expect(process.exitCode).toBe(23);
+		const stdout = logSpy.mock.calls.map(([message]) => String(message)).join("\n");
+		const stderr = errorSpy.mock.calls.map(([message]) => String(message)).join("\n");
+		expect(stdout).not.toContain("Updating pi with");
+		expect(stdout).not.toContain("Updated pi from");
+		expect(stderr).not.toContain("If this keeps failing");
+		expect(stderr).not.toContain("exited with code 23");
+	});
 	it("updates installer-managed Pi through a staged immutable release", async () => {
 		const targetVersion = getNewerPatchVersion();
 		const { managedRoot, npmRecordPath } = prepareManagedInstall(targetVersion);

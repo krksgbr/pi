@@ -162,6 +162,9 @@ describe("findNodePackageDir", () => {
 
 describe("detectInstallMethod", () => {
 	test("detects pnpm from Windows .pnpm install paths", () => {
+		tempDir = mkdtempSync(join(tmpdir(), "pi-pnpm-detection-"));
+		process.env.PI_PACKAGE_DIR = tempDir;
+		writeFileSync(join(tempDir, "package.json"), JSON.stringify({ name: "@earendil-works/pi-coding-agent" }));
 		setExecPath(
 			"C:\\Users\\Admin\\Documents\\pnpm-repository\\global\\5\\.pnpm\\@earendil-works+pi-coding-agent@0.67.68\\node_modules\\@earendil-works\\pi-coding-agent\\dist\\cli.js",
 		);
@@ -173,6 +176,9 @@ describe("detectInstallMethod", () => {
 	});
 
 	test("does not self-update unknown wrapper installs", () => {
+		tempDir = mkdtempSync(join(tmpdir(), "pi-wrapper-"));
+		process.env.PI_PACKAGE_DIR = tempDir;
+		writeFileSync(join(tempDir, "package.json"), JSON.stringify({ name: "@earendil-works/pi-coding-agent" }));
 		setExecPath("/usr/local/bin/node");
 
 		expect(detectInstallMethod()).toBe("unknown");
@@ -182,11 +188,11 @@ describe("detectInstallMethod", () => {
 		);
 	});
 
-	test("self-updates the linked private source checkout", () => {
+	test("dispatches linked source updates to the configured owner", () => {
 		setExecPath("/usr/local/bin/node");
 		process.argv[1] = join(getPackageDir(), "src", "cli.ts");
 		const installSpec = "@earendil-works/pi-coding-agent@1.2.3";
-		const scriptPath = resolve(getPackageDir(), "..", "..", "scripts", "update-private-fork.mjs");
+		const scriptPath = resolve(getPackageDir(), "../../../../scripts/update-system-pi.ts");
 
 		expect(
 			getSelfUpdateCommand("@earendil-works/pi-coding-agent", undefined, {
@@ -194,11 +200,37 @@ describe("detectInstallMethod", () => {
 				installSpec,
 			}),
 		).toEqual({
+			kind: "source-owner",
 			command: "/usr/local/bin/node",
 			args: [scriptPath, installSpec],
 			display: `/usr/local/bin/node ${scriptPath} ${installSpec}`,
 		});
 		expect(getUpdateInstruction("@earendil-works/pi-coding-agent")).toBe("Run: pi update");
+	});
+
+	test("never falls back when the configured source owner is missing", () => {
+		const { packageDir } = createNpmPrefixInstall();
+		process.argv[1] = join(packageDir, "dist", "cli.js");
+		writeFileSync(
+			join(packageDir, "package.json"),
+			JSON.stringify({ piConfig: { selfUpdateScript: "../../../../scripts/missing-owner.ts" } }),
+		);
+
+		expect(
+			getSelfUpdateCommand("@earendil-works/pi-coding-agent", undefined, {
+				packageName: "@earendil-works/pi-coding-agent",
+				installSpec: "@earendil-works/pi-coding-agent@1.2.3",
+			}),
+		).toBeUndefined();
+		expect(
+			getSelfUpdateUnavailableInstruction("@earendil-works/pi-coding-agent", undefined, {
+				packageName: "@earendil-works/pi-coding-agent",
+				installSpec: "@earendil-works/pi-coding-agent@1.2.3",
+			}),
+		).toContain("configured source update owner does not exist");
+		expect(getUpdateInstruction("@earendil-works/pi-coding-agent")).toContain(
+			"configured source update owner does not exist",
+		);
 	});
 
 	test("self-updates npm installs from custom prefixes", () => {
@@ -208,6 +240,7 @@ describe("detectInstallMethod", () => {
 
 		expect(detectInstallMethod()).toBe("npm");
 		expect(command).toEqual({
+			kind: "package-manager",
 			command: "npm",
 			args: [
 				"--prefix",
@@ -231,6 +264,7 @@ describe("detectInstallMethod", () => {
 		});
 
 		expect(command).toEqual({
+			kind: "package-manager",
 			command: "npm",
 			args: [
 				"--prefix",
@@ -251,6 +285,7 @@ describe("detectInstallMethod", () => {
 		const command = getSelfUpdateCommand("@mariozechner/pi-coding-agent", undefined, "@new-scope/pi");
 
 		expect(command).toEqual({
+			kind: "package-manager",
 			command: "npm",
 			args: ["--prefix", prefix, "install", "-g", "--ignore-scripts", "--min-release-age=0", "@new-scope/pi"],
 			display: `npm --prefix ${prefix} uninstall -g @mariozechner/pi-coding-agent && npm --prefix ${prefix} install -g --ignore-scripts --min-release-age=0 @new-scope/pi`,
@@ -275,6 +310,7 @@ describe("detectInstallMethod", () => {
 		const command = getSelfUpdateCommand("@earendil-works/pi-coding-agent", ["npm", "--prefix", prefix]);
 
 		expect(command).toEqual({
+			kind: "package-manager",
 			command: "npm",
 			args: [
 				"--prefix",
@@ -333,6 +369,7 @@ describe("detectInstallMethod", () => {
 
 		expect(detectInstallMethod()).toBe("bun");
 		expect(command).toEqual({
+			kind: "package-manager",
 			command: "bun",
 			args: ["install", "-g", "--ignore-scripts", "--minimum-release-age=0", "@earendil-works/pi-coding-agent"],
 			display: "bun install -g --ignore-scripts --minimum-release-age=0 @earendil-works/pi-coding-agent",
@@ -346,6 +383,7 @@ describe("detectInstallMethod", () => {
 
 		expect(detectInstallMethod()).toBe("pnpm");
 		expect(command).toEqual({
+			kind: "package-manager",
 			command: "pnpm",
 			args: ["install", "-g", "--ignore-scripts", "--config.minimumReleaseAge=0", "@new-scope/pi"],
 			display:
@@ -402,6 +440,7 @@ describe("detectInstallMethod", () => {
 
 		expect(detectInstallMethod()).toBe("pnpm");
 		expect(command).toEqual({
+			kind: "package-manager",
 			command: "pnpm",
 			args: ["install", "-g", "--ignore-scripts", "--config.minimumReleaseAge=0", packageName],
 			display: `pnpm install -g --ignore-scripts --config.minimumReleaseAge=0 ${packageName}`,
@@ -415,6 +454,7 @@ describe("detectInstallMethod", () => {
 
 		expect(detectInstallMethod()).toBe("yarn");
 		expect(command).toEqual({
+			kind: "package-manager",
 			command: "yarn",
 			args: ["global", "add", "--ignore-scripts", "@new-scope/pi"],
 			display: "yarn global remove @mariozechner/pi-coding-agent && yarn global add --ignore-scripts @new-scope/pi",
@@ -440,6 +480,7 @@ describe("detectInstallMethod", () => {
 
 		expect(detectInstallMethod()).toBe("bun");
 		expect(command).toEqual({
+			kind: "package-manager",
 			command: "bun",
 			args: ["install", "-g", "--ignore-scripts", "--minimum-release-age=0", "@new-scope/pi"],
 			display:

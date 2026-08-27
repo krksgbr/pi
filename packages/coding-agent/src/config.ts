@@ -35,9 +35,16 @@ interface SelfUpdateCommandStep {
 	display: string;
 }
 
-export interface SelfUpdateCommand extends SelfUpdateCommandStep {
+interface PackageManagerSelfUpdateCommand extends SelfUpdateCommandStep {
+	kind: "package-manager";
 	steps?: SelfUpdateCommandStep[];
 }
+
+interface SourceOwnerSelfUpdateCommand extends SelfUpdateCommandStep {
+	kind: "source-owner";
+}
+
+export type SelfUpdateCommand = PackageManagerSelfUpdateCommand | SourceOwnerSelfUpdateCommand;
 
 export type SelfUpdatePackageTarget = string | { packageName: string; installSpec?: string };
 
@@ -54,9 +61,10 @@ function normalizeSelfUpdatePackageTarget(target: SelfUpdatePackageTarget): {
 function makeSelfUpdateCommand(
 	installStep: SelfUpdateCommandStep,
 	uninstallStep?: SelfUpdateCommandStep,
-): SelfUpdateCommand {
-	if (!uninstallStep) return installStep;
+): PackageManagerSelfUpdateCommand {
+	if (!uninstallStep) return { kind: "package-manager", ...installStep };
 	return {
+		kind: "package-manager",
 		...installStep,
 		display: `${uninstallStep.display} && ${installStep.display}`,
 		steps: [uninstallStep, installStep],
@@ -280,25 +288,71 @@ function getPathComparisonCandidates(path: string): string[] {
 
 const VERSIONED_PACKAGE_SPEC = /@\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/;
 
-function getPrivateForkUpdateScriptPath(): string | undefined {
-	const packageDir = getPackageDir();
-	const scriptPath = resolve(packageDir, "..", "..", "scripts", "update-private-fork.mjs");
-	if (!existsSync(scriptPath)) return undefined;
+type SourceOwnerResolution =
+	| { kind: "not-configured" }
+	| { kind: "unavailable"; instruction: string }
+	| { kind: "ready"; command: SourceOwnerSelfUpdateCommand };
 
-	const entrypoint = process.argv[1];
-	if (!entrypoint) return undefined;
-	const expectedEntrypoints = [join(packageDir, "dist", "cli.js"), join(packageDir, "src", "cli.ts")].flatMap((path) =>
-		getPathComparisonCandidates(path),
-	);
-	const actualEntrypoints = getPathComparisonCandidates(entrypoint);
-	return actualEntrypoints.some((actual) => expectedEntrypoints.includes(actual)) ? scriptPath : undefined;
+function readActivePackageJson(): PackageJson | undefined {
+	try {
+		return JSON.parse(stripBom(readFileSync(getPackageJsonPath(), "utf-8"))) as PackageJson;
+	} catch (error: unknown) {
+		const filesystemError = error as NodeJS.ErrnoException;
+		if (filesystemError.code === "ENOENT") return undefined;
+		throw error;
+	}
 }
 
-function getPrivateForkSelfUpdateCommand(updatePackageTarget: SelfUpdatePackageTarget): SelfUpdateCommand | undefined {
-	const scriptPath = getPrivateForkUpdateScriptPath();
+function resolveSourceOwnerSelfUpdate(updatePackageTarget: SelfUpdatePackageTarget): SourceOwnerResolution {
+	const configuredScript = readActivePackageJson()?.piConfig?.selfUpdateScript;
+	if (configuredScript === undefined) return { kind: "not-configured" };
+	if (typeof configuredScript !== "string" || configuredScript.trim() === "") {
+		return {
+			kind: "unavailable",
+			instruction: "The package's piConfig.selfUpdateScript must be a non-empty string.",
+		};
+	}
+
+	const packageDir = getPackageDir();
+	const scriptPath = resolve(packageDir, configuredScript);
 	const target = normalizeSelfUpdatePackageTarget(updatePackageTarget);
-	if (!scriptPath || !VERSIONED_PACKAGE_SPEC.test(target.installSpec)) return undefined;
-	return makeSelfUpdateCommandStep(process.execPath, [scriptPath, target.installSpec]);
+	if (!VERSIONED_PACKAGE_SPEC.test(target.installSpec)) {
+		return {
+			kind: "unavailable",
+			instruction: `The configured source owner requires an exact versioned package target, received: ${target.installSpec}`,
+		};
+	}
+	if (!existsSync(scriptPath)) {
+		return {
+			kind: "unavailable",
+			instruction: `The configured source update owner does not exist: ${scriptPath}`,
+		};
+	}
+
+	const entrypoint = process.argv[1];
+	if (!entrypoint) {
+		return { kind: "unavailable", instruction: "The active Pi entrypoint is unavailable." };
+	}
+	const expectedEntrypoints = [
+		join(packageDir, "dist", "bundle", "cli.js"),
+		join(packageDir, "dist", "cli.js"),
+		join(packageDir, "src", "cli.ts"),
+	].flatMap((path) => getPathComparisonCandidates(path));
+	const actualEntrypoints = getPathComparisonCandidates(entrypoint);
+	if (!actualEntrypoints.some((actual) => expectedEntrypoints.includes(actual))) {
+		return {
+			kind: "unavailable",
+			instruction: `The configured source owner only updates the Pi entrypoint from its owning package: ${packageDir}`,
+		};
+	}
+
+	return {
+		kind: "ready",
+		command: {
+			kind: "source-owner",
+			...makeSelfUpdateCommandStep(process.execPath, [scriptPath, target.installSpec]),
+		},
+	};
 }
 
 function getEntrypointPackageDir(): string | undefined {
@@ -341,8 +395,10 @@ export function getSelfUpdateCommand(
 	npmCommand?: string[],
 	updatePackageTarget: SelfUpdatePackageTarget = packageName,
 ): SelfUpdateCommand | undefined {
-	const privateForkCommand = getPrivateForkSelfUpdateCommand(updatePackageTarget);
-	if (privateForkCommand) return privateForkCommand;
+	const sourceOwner = resolveSourceOwnerSelfUpdate(updatePackageTarget);
+	if (sourceOwner.kind !== "not-configured") {
+		return sourceOwner.kind === "ready" ? sourceOwner.command : undefined;
+	}
 
 	const method = detectInstallMethod();
 	const command = getSelfUpdateCommandForMethod(method, packageName, updatePackageTarget, npmCommand);
@@ -357,6 +413,10 @@ export function getSelfUpdateUnavailableInstruction(
 	npmCommand?: string[],
 	updatePackageTarget: SelfUpdatePackageTarget = packageName,
 ): string {
+	const sourceOwner = resolveSourceOwnerSelfUpdate(updatePackageTarget);
+	if (sourceOwner.kind === "unavailable") return sourceOwner.instruction;
+	if (sourceOwner.kind === "ready") return `Run: ${APP_NAME} update`;
+
 	const method = detectInstallMethod();
 	const target = normalizeSelfUpdatePackageTarget(updatePackageTarget);
 	if (method === "bun-binary") {
@@ -373,9 +433,10 @@ export function getSelfUpdateUnavailableInstruction(
 }
 
 export function getUpdateInstruction(packageName: string): string {
-	if (getPrivateForkUpdateScriptPath()) {
-		return `Run: ${APP_NAME} update`;
-	}
+	const sourceOwner = resolveSourceOwnerSelfUpdate({ packageName, installSpec: `${packageName}@${VERSION}` });
+	if (sourceOwner.kind === "ready") return `Run: ${APP_NAME} update`;
+	if (sourceOwner.kind === "unavailable") return sourceOwner.instruction;
+
 	const method = detectInstallMethod();
 	const command = getSelfUpdateCommandForMethod(method, packageName);
 	if (command) {
@@ -511,6 +572,7 @@ interface PackageJson {
 	piConfig?: {
 		name?: string;
 		configDir?: string;
+		selfUpdateScript?: unknown;
 	};
 }
 
